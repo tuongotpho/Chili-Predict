@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn, Edit2, Trash2, Check, X as CloseIcon } from 'lucide-react';
+import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn, Edit2, Trash2, Check, X as CloseIcon, Menu } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI, Type } from '@google/genai';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import Chatbot from './Chatbot';
+import { Modal } from './Modal';
 
 import { auth, db } from '@/lib/firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
@@ -48,6 +49,20 @@ export default function Dashboard() {
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
   const [editPurchaseDate, setEditPurchaseDate] = useState('');
   const [editPurchaseQuantity, setEditPurchaseQuantity] = useState('');
+
+  // Modal states
+  const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+
+  const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false);
+  const [editCustomerName, setEditCustomerName] = useState('');
+
+  const [isDeleteCustomerModalOpen, setIsDeleteCustomerModalOpen] = useState(false);
+
+  const [isDeletePurchaseModalOpen, setIsDeletePurchaseModalOpen] = useState(false);
+  const [purchaseToDelete, setPurchaseToDelete] = useState<string | null>(null);
+
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Auth listener
   useEffect(() => {
@@ -130,51 +145,57 @@ export default function Dashboard() {
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleAddCustomer = async () => {
-    if (!user) return;
-    const name = prompt('Nhập tên khách hàng mới:');
-    if (name && name.trim()) {
-      try {
-        await addDoc(collection(db, 'chili_customers'), {
-          userId: user.uid,
-          name: name.trim(),
-          purchases: [],
-          createdAt: serverTimestamp(),
-        });
-      } catch (error) {
-        console.error('Error adding customer:', error);
-        alert('Có lỗi xảy ra khi thêm khách hàng.');
-      }
+  const handleAddCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newCustomerName.trim()) return;
+    try {
+      await addDoc(collection(db, 'chili_customers'), {
+        userId: user.uid,
+        name: newCustomerName.trim(),
+        purchases: [],
+        createdAt: serverTimestamp(),
+      });
+      setNewCustomerName('');
+      setIsAddCustomerModalOpen(false);
+      setIsMobileMenuOpen(false);
+    } catch (error) {
+      console.error('Error adding customer:', error);
+      alert('Có lỗi xảy ra khi thêm khách hàng.');
     }
   };
 
-  const handleEditCustomer = async () => {
-    if (!selectedCustomer) return;
-    const newName = prompt('Nhập tên mới cho khách hàng:', selectedCustomer.name);
-    if (newName && newName.trim() && newName !== selectedCustomer.name) {
-      try {
-        const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
-        await updateDoc(customerRef, {
-          name: newName.trim(),
-        });
-      } catch (error) {
-        console.error('Error updating customer:', error);
-        alert('Có lỗi xảy ra khi cập nhật tên khách hàng.');
-      }
+  const openEditCustomerModal = () => {
+    if (selectedCustomer) {
+      setEditCustomerName(selectedCustomer.name);
+      setIsEditCustomerModalOpen(true);
+    }
+  };
+
+  const handleEditCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer || !editCustomerName.trim() || editCustomerName === selectedCustomer.name) return;
+    try {
+      const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        name: editCustomerName.trim(),
+      });
+      setIsEditCustomerModalOpen(false);
+    } catch (error) {
+      console.error('Error updating customer:', error);
+      alert('Có lỗi xảy ra khi cập nhật tên khách hàng.');
     }
   };
 
   const handleDeleteCustomer = async () => {
     if (!selectedCustomer) return;
-    if (confirm(`Bạn có chắc chắn muốn xóa khách hàng "${selectedCustomer.name}" và toàn bộ lịch sử mua hàng không?`)) {
-      try {
-        const { deleteDoc } = await import('firebase/firestore');
-        await deleteDoc(doc(db, 'chili_customers', selectedCustomer.id));
-        setSelectedCustomerId(null);
-      } catch (error) {
-        console.error('Error deleting customer:', error);
-        alert('Có lỗi xảy ra khi xóa khách hàng.');
-      }
+    try {
+      const { deleteDoc } = await import('firebase/firestore');
+      await deleteDoc(doc(db, 'chili_customers', selectedCustomer.id));
+      setSelectedCustomerId(null);
+      setIsDeleteCustomerModalOpen(false);
+    } catch (error) {
+      console.error('Error deleting customer:', error);
+      alert('Có lỗi xảy ra khi xóa khách hàng.');
     }
   };
 
@@ -236,20 +257,25 @@ export default function Dashboard() {
     }
   };
 
-  const handleDeletePurchase = async (purchaseId: string) => {
-    if (!selectedCustomer) return;
-    if (confirm('Bạn có chắc chắn muốn xóa lần mua này không?')) {
-      const updatedPurchases = selectedCustomer.purchases.filter(p => p.id !== purchaseId);
-      try {
-        const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
-        await updateDoc(customerRef, {
-          purchases: updatedPurchases,
-          prediction: null,
-        });
-      } catch (error) {
-        console.error('Error deleting purchase:', error);
-        alert('Có lỗi xảy ra khi xóa lần mua.');
-      }
+  const confirmDeletePurchase = (purchaseId: string) => {
+    setPurchaseToDelete(purchaseId);
+    setIsDeletePurchaseModalOpen(true);
+  };
+
+  const handleDeletePurchase = async () => {
+    if (!selectedCustomer || !purchaseToDelete) return;
+    const updatedPurchases = selectedCustomer.purchases.filter(p => p.id !== purchaseToDelete);
+    try {
+      const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        purchases: updatedPurchases,
+        prediction: null,
+      });
+      setIsDeletePurchaseModalOpen(false);
+      setPurchaseToDelete(null);
+    } catch (error) {
+      console.error('Error deleting purchase:', error);
+      alert('Có lỗi xảy ra khi xóa lần mua.');
     }
   };
 
@@ -337,17 +363,44 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex h-screen bg-stone-50 text-stone-900 font-sans">
+    <div className="flex h-screen bg-stone-50 text-stone-900 font-sans overflow-hidden">
+      {/* Mobile Header */}
+      <div className="md:hidden flex items-center justify-between p-4 bg-white border-b border-stone-200">
+        <div className="flex items-center gap-2 text-red-600">
+          <Flame className="w-6 h-6 fill-current" />
+          <h1 className="font-bold text-xl tracking-tight">ChiliPredict</h1>
+        </div>
+        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-stone-600">
+          <Menu className="w-6 h-6" />
+        </button>
+      </div>
+
+      {/* Sidebar Overlay */}
+      {isMobileMenuOpen && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="w-80 bg-white border-r border-stone-200 flex flex-col">
+      <div className={cn(
+        "fixed md:static inset-y-0 left-0 z-50 w-80 bg-white border-r border-stone-200 flex flex-col transform transition-transform duration-300 ease-in-out",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
         <div className="p-4 border-b border-stone-200 flex items-center justify-between">
           <div className="flex items-center gap-2 text-red-600">
             <Flame className="w-6 h-6 fill-current" />
-            <h1 className="font-bold text-xl tracking-tight">ChiliPredict</h1>
+            <h1 className="font-bold text-xl tracking-tight hidden md:block">ChiliPredict</h1>
           </div>
-          <button onClick={handleLogout} className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors" title="Đăng xuất">
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex gap-2">
+            <button onClick={handleLogout} className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors" title="Đăng xuất">
+              <LogOut className="w-4 h-4" />
+            </button>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors">
+              <CloseIcon className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         
         <div className="p-4 border-b border-stone-200">
@@ -372,12 +425,15 @@ export default function Dashboard() {
             filteredCustomers.map((customer) => (
               <button
                 key={customer.id}
-                onClick={() => setSelectedCustomerId(customer.id)}
+                onClick={() => {
+                  setSelectedCustomerId(customer.id);
+                  setIsMobileMenuOpen(false);
+                }}
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left transition-colors",
                   selectedCustomerId === customer.id
-                    ? "bg-red-50 text-red-900"
-                    : "hover:bg-stone-100 text-stone-700"
+                    ? "bg-gradient-to-r from-red-50 to-orange-50 text-red-900 border border-red-100"
+                    : "hover:bg-stone-100 text-stone-700 border border-transparent"
                 )}
               >
                 <div className={cn(
@@ -399,8 +455,8 @@ export default function Dashboard() {
 
         <div className="p-4 border-t border-stone-200">
           <button
-            onClick={handleAddCustomer}
-            className="w-full flex items-center justify-center gap-2 py-2.5 bg-stone-900 text-white rounded-lg hover:bg-stone-800 transition-colors text-sm font-medium"
+            onClick={() => setIsAddCustomerModalOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-lg hover:from-red-700 hover:to-orange-600 transition-all shadow-md shadow-red-200 text-sm font-medium"
           >
             <Plus className="w-4 h-4" />
             Thêm khách hàng
@@ -409,7 +465,7 @@ export default function Dashboard() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden h-full">
         {selectedCustomer ? (
           <>
             <div className="p-8 border-b border-stone-200 bg-white flex justify-between items-start">
@@ -424,14 +480,14 @@ export default function Dashboard() {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={handleEditCustomer}
+                  onClick={openEditCustomerModal}
                   className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
                   title="Sửa tên khách hàng"
                 >
                   <Edit2 className="w-5 h-5" />
                 </button>
                 <button
-                  onClick={handleDeleteCustomer}
+                  onClick={() => setIsDeleteCustomerModalOpen(true)}
                   className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                   title="Xóa khách hàng"
                 >
@@ -551,7 +607,7 @@ export default function Dashboard() {
                                       <Edit2 className="w-4 h-4" />
                                     </button>
                                     <button
-                                      onClick={() => handleDeletePurchase(purchase.id)}
+                                      onClick={() => confirmDeletePurchase(purchase.id)}
                                       className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                     >
                                       <Trash2 className="w-4 h-4" />
@@ -597,7 +653,7 @@ export default function Dashboard() {
                       </div>
                       <button
                         type="submit"
-                        className="w-full py-2.5 bg-stone-900 text-white rounded-lg hover:bg-stone-800 transition-colors font-medium"
+                        className="w-full py-2.5 bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-lg hover:from-red-700 hover:to-orange-600 transition-all font-medium shadow-md shadow-red-200"
                       >
                         Lưu thông tin
                       </button>
@@ -684,6 +740,130 @@ export default function Dashboard() {
       </div>
 
       <Chatbot />
+
+      {/* Modals */}
+      <Modal
+        isOpen={isAddCustomerModalOpen}
+        onClose={() => setIsAddCustomerModalOpen(false)}
+        title="Thêm khách hàng mới"
+      >
+        <form onSubmit={handleAddCustomer} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-stone-700 mb-1">Tên khách hàng</label>
+            <input
+              type="text"
+              required
+              value={newCustomerName}
+              onChange={(e) => setNewCustomerName(e.target.value)}
+              placeholder="VD: Nhà hàng Phở Lý Quốc Sư"
+              className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsAddCustomerModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-sm font-medium bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-lg hover:from-red-700 hover:to-orange-600 transition-all shadow-md shadow-red-200"
+            >
+              Thêm mới
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={isEditCustomerModalOpen}
+        onClose={() => setIsEditCustomerModalOpen(false)}
+        title="Sửa tên khách hàng"
+      >
+        <form onSubmit={handleEditCustomer} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-stone-700 mb-1">Tên khách hàng</label>
+            <input
+              type="text"
+              required
+              value={editCustomerName}
+              onChange={(e) => setEditCustomerName(e.target.value)}
+              className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsEditCustomerModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-sm font-medium bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-lg hover:from-red-700 hover:to-orange-600 transition-all shadow-md shadow-red-200"
+            >
+              Lưu thay đổi
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={isDeleteCustomerModalOpen}
+        onClose={() => setIsDeleteCustomerModalOpen(false)}
+        title="Xóa khách hàng"
+      >
+        <div className="space-y-4">
+          <p className="text-stone-600">
+            Bạn có chắc chắn muốn xóa khách hàng <span className="font-semibold text-stone-900">&quot;{selectedCustomer?.name}&quot;</span> và toàn bộ lịch sử mua hàng không? Hành động này không thể hoàn tác.
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => setIsDeleteCustomerModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              onClick={handleDeleteCustomer}
+              className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-md shadow-red-200"
+            >
+              Xóa vĩnh viễn
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isDeletePurchaseModalOpen}
+        onClose={() => setIsDeletePurchaseModalOpen(false)}
+        title="Xóa lần mua hàng"
+      >
+        <div className="space-y-4">
+          <p className="text-stone-600">
+            Bạn có chắc chắn muốn xóa lần mua này không?
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              onClick={() => setIsDeletePurchaseModalOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+            >
+              Hủy
+            </button>
+            <button
+              onClick={handleDeletePurchase}
+              className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-md shadow-red-200"
+            >
+              Xóa
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
