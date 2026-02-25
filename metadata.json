@@ -1,0 +1,5 @@
+{
+  "name": "ChiliPredict",
+  "description": "Dự đoán thời điểm mua hàng tiếp theo cho khách hàng mua buôn tương ớt.",
+  "requestFramePermissions": []
+}
