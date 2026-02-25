@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn, Edit2, Trash2, Check, X as CloseIcon, Menu } from 'lucide-react';
+import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn, Edit2, Trash2, Check, X as CloseIcon, Menu, Lightbulb, Clock } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -23,6 +23,9 @@ type Prediction = {
   nextPurchaseDate: string;
   expectedQuantity: number;
   reasoning: string;
+  trendAnalysis: string;
+  intervalAnalysis: string;
+  recommendation: string;
 };
 
 type Customer = {
@@ -290,14 +293,17 @@ export default function Dashboard() {
         Tôi là một người kinh doanh tương ớt bán buôn. Dưới đây là lịch sử mua hàng của khách hàng "${selectedCustomer.name}":
         ${selectedCustomer.purchases.map(p => `- Ngày: ${p.date}, Số lượng: ${p.quantity} lít/chai`).join('\n')}
         
-        Dựa vào dữ liệu trên, hãy dự đoán:
-        1. Ngày khách hàng này có khả năng sẽ mua hàng tiếp theo (định dạng YYYY-MM-DD).
-        2. Số lượng dự kiến họ sẽ mua.
-        3. Lý do ngắn gọn cho dự đoán này (bằng tiếng Việt).
+        Dựa vào dữ liệu trên, hãy đóng vai một chuyên gia phân tích dữ liệu kinh doanh và cung cấp các thông tin sau bằng tiếng Việt:
+        1. "nextPurchaseDate": Ngày khách hàng này có khả năng sẽ mua hàng tiếp theo (định dạng YYYY-MM-DD).
+        2. "expectedQuantity": Số lượng dự kiến họ sẽ mua (số).
+        3. "reasoning": Lý do ngắn gọn cho dự đoán ngày và số lượng trên.
+        4. "intervalAnalysis": Nhận xét chi tiết về các thời điểm mua hàng (các đợt mua cách nhau bao lâu, có đều đặn không, có dấu hiệu bất thường không).
+        5. "trendAnalysis": Đánh giá tình hình kinh doanh của khách hàng dựa trên số lượng và tần suất mua (quán có đang bán chạy hơn không, lượng tiêu thụ tương ớt đang tăng hay giảm, tốc độ tiêu thụ trung bình).
+        6. "recommendation": Đề xuất hành động thông minh cho tôi (người bán buôn) (ví dụ: thời điểm vàng để gọi điện chăm sóc, nên up-sell/cross-sell gì, có cần cảnh báo nguy cơ mất khách không).
       `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gemini-3.1-pro-preview', // Nâng cấp lên model Pro để phân tích sâu hơn
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -307,8 +313,11 @@ export default function Dashboard() {
               nextPurchaseDate: { type: Type.STRING, description: 'YYYY-MM-DD' },
               expectedQuantity: { type: Type.NUMBER },
               reasoning: { type: Type.STRING },
+              intervalAnalysis: { type: Type.STRING },
+              trendAnalysis: { type: Type.STRING },
+              recommendation: { type: Type.STRING },
             },
-            required: ['nextPurchaseDate', 'expectedQuantity', 'reasoning'],
+            required: ['nextPurchaseDate', 'expectedQuantity', 'reasoning', 'intervalAnalysis', 'trendAnalysis', 'recommendation'],
           },
         },
       });
@@ -667,58 +676,80 @@ export default function Dashboard() {
                     </div>
                     
                     <h3 className="text-lg font-semibold mb-4 text-red-900 relative z-10">
-                      Dự báo AI (Flash Lite)
+                      Phân tích & Dự báo AI (Pro)
                     </h3>
                     
                     {selectedCustomer.purchases.length < 2 ? (
                       <div className="text-sm text-red-700/80 relative z-10 flex items-start gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                        <p>Cần ít nhất 2 lần mua hàng để AI có thể dự đoán chính xác thời điểm mua tiếp theo.</p>
+                        <p>Cần ít nhất 2 lần mua hàng để AI có thể phân tích xu hướng và dự đoán chính xác.</p>
                       </div>
                     ) : (
                       <div className="relative z-10 space-y-4">
                         {selectedCustomer.prediction ? (
                           <div className="space-y-4">
-                            <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
-                              <div className="text-sm text-red-800 mb-1">Dự kiến ngày mua tiếp theo</div>
-                              <div className="text-2xl font-bold text-red-900">
-                                {format(parseISO(selectedCustomer.prediction.nextPurchaseDate), 'dd/MM/yyyy')}
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
+                                <div className="text-sm text-red-800 mb-1">Ngày mua dự kiến</div>
+                                <div className="text-xl font-bold text-red-900">
+                                  {format(parseISO(selectedCustomer.prediction.nextPurchaseDate), 'dd/MM/yyyy')}
+                                </div>
+                              </div>
+                              <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
+                                <div className="text-sm text-red-800 mb-1">Số lượng dự kiến</div>
+                                <div className="text-xl font-bold text-red-900 font-mono">
+                                  {selectedCustomer.prediction.expectedQuantity} <span className="text-base font-normal">lít</span>
+                                </div>
                               </div>
                             </div>
-                            <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
-                              <div className="text-sm text-red-800 mb-1">Số lượng dự kiến</div>
-                              <div className="text-2xl font-bold text-red-900 font-mono">
-                                {selectedCustomer.prediction.expectedQuantity} <span className="text-base font-normal">lít</span>
+                            
+                            <div className="space-y-3">
+                              <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
+                                <h4 className="font-semibold text-red-900 mb-1 flex items-center gap-2">
+                                  <TrendingUp className="w-4 h-4" /> Đánh giá kinh doanh
+                                </h4>
+                                <p className="text-sm text-red-800 leading-relaxed">{selectedCustomer.prediction.trendAnalysis}</p>
+                              </div>
+                              
+                              <div className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-red-200/50">
+                                <h4 className="font-semibold text-red-900 mb-1 flex items-center gap-2">
+                                  <Clock className="w-4 h-4" /> Nhịp độ mua hàng
+                                </h4>
+                                <p className="text-sm text-red-800 leading-relaxed">{selectedCustomer.prediction.intervalAnalysis}</p>
+                              </div>
+
+                              <div className="bg-red-100/50 rounded-xl p-4 border border-red-200/50">
+                                <h4 className="font-semibold text-red-900 mb-1 flex items-center gap-2">
+                                  <Lightbulb className="w-4 h-4 text-amber-600" /> Đề xuất hành động
+                                </h4>
+                                <p className="text-sm text-red-800 leading-relaxed">{selectedCustomer.prediction.recommendation}</p>
                               </div>
                             </div>
-                            <div className="text-sm text-red-800 bg-red-100/50 p-3 rounded-lg">
-                              <span className="font-semibold">Lý do: </span>
-                              {selectedCustomer.prediction.reasoning}
-                            </div>
+
                             <button
                               onClick={handlePredict}
                               disabled={isPredicting}
-                              className="w-full py-2 bg-white text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition-colors font-medium text-sm flex items-center justify-center gap-2"
+                              className="w-full py-2.5 bg-white text-red-700 border border-red-200 rounded-xl hover:bg-red-50 transition-colors font-medium text-sm flex items-center justify-center gap-2 mt-2 shadow-sm"
                             >
                               {isPredicting ? <Loader2 className="w-4 h-4 animate-spin" /> : <TrendingUp className="w-4 h-4" />}
-                              Cập nhật dự báo
+                              Cập nhật phân tích
                             </button>
                           </div>
                         ) : (
                           <button
                             onClick={handlePredict}
                             disabled={isPredicting}
-                            className="w-full py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-medium shadow-sm shadow-red-200 flex items-center justify-center gap-2"
+                            className="w-full py-3 bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-xl hover:from-red-700 hover:to-orange-600 transition-all font-medium shadow-md shadow-red-200 flex items-center justify-center gap-2"
                           >
                             {isPredicting ? (
                               <>
                                 <Loader2 className="w-5 h-5 animate-spin" />
-                                Đang phân tích...
+                                Đang phân tích dữ liệu...
                               </>
                             ) : (
                               <>
                                 <Flame className="w-5 h-5" />
-                                Dự đoán ngay
+                                Phân tích & Dự báo ngay
                               </>
                             )}
                           </button>
