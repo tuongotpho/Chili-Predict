@@ -64,8 +64,7 @@ export default function Dashboard() {
 
     const q = query(
       collection(db, 'chili_customers'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -73,6 +72,14 @@ export default function Dashboard() {
       snapshot.forEach((doc) => {
         fetchedCustomers.push({ id: doc.id, ...doc.data() } as Customer);
       });
+      
+      // Sort in memory to avoid composite index requirement
+      fetchedCustomers.sort((a, b) => {
+        const dateA = a.createdAt?.seconds || 0;
+        const dateB = b.createdAt?.seconds || 0;
+        return dateB - dateA;
+      });
+
       setCustomers(fetchedCustomers);
       
       // Auto-select first customer if none selected
@@ -81,10 +88,19 @@ export default function Dashboard() {
       } else if (fetchedCustomers.length === 0) {
         setSelectedCustomerId(null);
       }
+    }, (error) => {
+      console.error("Firestore error:", error);
+      if (error.code === 'failed-precondition') {
+        alert("Lỗi Firestore: Truy vấn này yêu cầu một index. Vui lòng kiểm tra Firebase Console để tạo index composite cho 'chili_customers' với các trường 'userId' (Ascending) và 'createdAt' (Descending).");
+      } else if (error.code === 'permission-denied') {
+        alert("Lỗi quyền truy cập: Bạn không có quyền đọc dữ liệu này. Hãy đảm bảo bạn đã cập nhật Firestore Rules đúng như hướng dẫn.");
+      } else {
+        alert("Lỗi tải dữ liệu: " + error.message);
+      }
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, selectedCustomerId]);
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
