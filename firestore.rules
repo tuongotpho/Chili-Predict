@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. App "Cân của mẹ" (Giữ nguyên như cũ)
+    match /weighing_slips/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // 2. App Portfolio (Show hàng)
+    
+    // a. Quy tắc cho Dự án (Projects)
+    match /showcase/{document=**} {
+      allow read: if true;                  // Khách vãng lai xem được
+      allow write: if request.auth != null; // Chỉ Admin (bạn) mới được sửa
+    }
+
+    // b. Quy tắc cho Hồ sơ cá nhân (CV/Profile)
+    match /portfolio/{document=**} {
+      allow read: if true;                  // Khách vãng lai xem được
+      allow write: if request.auth != null; // Chỉ Admin (bạn) mới được sửa
+    }
+
+    // 3. App ChiliPredict (Dự đoán tương ớt) -> MỚI THÊM
+    match /chili_customers/{document=**} {
+      // Chỉ cho phép user đọc/ghi dữ liệu của chính họ
+      allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;
+      // Cho phép tạo mới nếu userId truyền lên khớp với uid của người dùng đang đăng nhập
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+    }
+  }
+}

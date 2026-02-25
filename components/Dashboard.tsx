@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2 } from 'lucide-react';
+import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI, Type } from '@google/genai';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import Chatbot from './Chatbot';
+
+import { auth, db } from '@/lib/firebase';
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 
 type Purchase = {
   id: string;
@@ -22,40 +26,83 @@ type Prediction = {
 
 type Customer = {
   id: string;
+  userId: string;
   name: string;
   purchases: Purchase[];
-  prediction?: Prediction;
+  prediction?: Prediction | null;
+  createdAt?: any;
 };
 
-const INITIAL_CUSTOMERS: Customer[] = [
-  {
-    id: '1',
-    name: 'Nhà hàng Phở Lý Quốc Sư',
-    purchases: [
-      { id: 'p1', date: '2023-10-01', quantity: 50 },
-      { id: 'p2', date: '2023-11-05', quantity: 55 },
-      { id: 'p3', date: '2023-12-10', quantity: 60 },
-      { id: 'p4', date: '2024-01-15', quantity: 50 },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Quán Bún Bò Huế Oanh',
-    purchases: [
-      { id: 'p5', date: '2023-12-01', quantity: 20 },
-      { id: 'p6', date: '2024-01-02', quantity: 25 },
-    ],
-  },
-];
-
 export default function Dashboard() {
-  const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(INITIAL_CUSTOMERS[0].id);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isPredicting, setIsPredicting] = useState(false);
 
   const [newPurchaseDate, setNewPurchaseDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [newPurchaseQuantity, setNewPurchaseQuantity] = useState('');
+
+  // Auth listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch customers from Firestore
+  useEffect(() => {
+    if (!user) {
+      setCustomers([]);
+      setSelectedCustomerId(null);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'chili_customers'),
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedCustomers: Customer[] = [];
+      snapshot.forEach((doc) => {
+        fetchedCustomers.push({ id: doc.id, ...doc.data() } as Customer);
+      });
+      setCustomers(fetchedCustomers);
+      
+      // Auto-select first customer if none selected
+      if (fetchedCustomers.length > 0 && !selectedCustomerId) {
+        setSelectedCustomerId(fetchedCustomers[0].id);
+      } else if (fetchedCustomers.length === 0) {
+        setSelectedCustomerId(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error('Error signing in:', error);
+      alert('Đăng nhập thất bại. Vui lòng thử lại.');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
 
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
 
@@ -63,20 +110,25 @@ export default function Dashboard() {
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
+    if (!user) return;
     const name = prompt('Nhập tên khách hàng mới:');
-    if (name) {
-      const newCustomer: Customer = {
-        id: crypto.randomUUID(),
-        name,
-        purchases: [],
-      };
-      setCustomers([...customers, newCustomer]);
-      setSelectedCustomerId(newCustomer.id);
+    if (name && name.trim()) {
+      try {
+        await addDoc(collection(db, 'chili_customers'), {
+          userId: user.uid,
+          name: name.trim(),
+          purchases: [],
+          createdAt: serverTimestamp(),
+        });
+      } catch (error) {
+        console.error('Error adding customer:', error);
+        alert('Có lỗi xảy ra khi thêm khách hàng.');
+      }
     }
   };
 
-  const handleAddPurchase = (e: React.FormEvent) => {
+  const handleAddPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomer || !newPurchaseDate || !newPurchaseQuantity) return;
 
@@ -86,19 +138,19 @@ export default function Dashboard() {
       quantity: parseInt(newPurchaseQuantity, 10),
     };
 
-    const updatedCustomers = customers.map((c) => {
-      if (c.id === selectedCustomer.id) {
-        return {
-          ...c,
-          purchases: [...c.purchases, newPurchase].sort((a, b) => a.date.localeCompare(b.date)),
-          prediction: undefined, // Clear old prediction
-        };
-      }
-      return c;
-    });
+    const updatedPurchases = [...selectedCustomer.purchases, newPurchase].sort((a, b) => a.date.localeCompare(b.date));
 
-    setCustomers(updatedCustomers);
-    setNewPurchaseQuantity('');
+    try {
+      const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        purchases: updatedPurchases,
+        prediction: null, // Clear old prediction
+      });
+      setNewPurchaseQuantity('');
+    } catch (error) {
+      console.error('Error adding purchase:', error);
+      alert('Có lỗi xảy ra khi thêm lần mua.');
+    }
   };
 
   const handlePredict = async () => {
@@ -137,14 +189,11 @@ export default function Dashboard() {
 
       const predictionData = JSON.parse(response.text || '{}') as Prediction;
 
-      const updatedCustomers = customers.map((c) => {
-        if (c.id === selectedCustomer.id) {
-          return { ...c, prediction: predictionData };
-        }
-        return c;
+      const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        prediction: predictionData,
       });
 
-      setCustomers(updatedCustomers);
     } catch (error) {
       console.error('Lỗi khi dự đoán:', error);
       alert('Có lỗi xảy ra khi dự đoán. Vui lòng thử lại.');
@@ -158,13 +207,47 @@ export default function Dashboard() {
     quantity: p.quantity
   })) || [];
 
+  if (authLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-stone-50">
+        <Loader2 className="w-8 h-8 animate-spin text-red-600" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-stone-50">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-stone-200 max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Flame className="w-8 h-8 fill-current" />
+          </div>
+          <h1 className="text-2xl font-bold text-stone-900 mb-2">ChiliPredict</h1>
+          <p className="text-stone-500 mb-8">Đăng nhập để quản lý khách hàng và dự đoán tồn kho tương ớt của bạn.</p>
+          <button
+            onClick={handleLogin}
+            className="w-full py-3 bg-stone-900 text-white rounded-xl hover:bg-stone-800 transition-colors font-medium flex items-center justify-center gap-2"
+          >
+            <LogIn className="w-5 h-5" />
+            Đăng nhập bằng Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-stone-50 text-stone-900 font-sans">
       {/* Sidebar */}
       <div className="w-80 bg-white border-r border-stone-200 flex flex-col">
-        <div className="p-4 border-b border-stone-200 flex items-center gap-2 text-red-600">
-          <Flame className="w-6 h-6 fill-current" />
-          <h1 className="font-bold text-xl tracking-tight">ChiliPredict</h1>
+        <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-red-600">
+            <Flame className="w-6 h-6 fill-current" />
+            <h1 className="font-bold text-xl tracking-tight">ChiliPredict</h1>
+          </div>
+          <button onClick={handleLogout} className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors" title="Đăng xuất">
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
         
         <div className="p-4 border-b border-stone-200">
@@ -181,31 +264,37 @@ export default function Dashboard() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {filteredCustomers.map((customer) => (
-            <button
-              key={customer.id}
-              onClick={() => setSelectedCustomerId(customer.id)}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left transition-colors",
-                selectedCustomerId === customer.id
-                  ? "bg-red-50 text-red-900"
-                  : "hover:bg-stone-100 text-stone-700"
-              )}
-            >
-              <div className={cn(
-                "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-                selectedCustomerId === customer.id ? "bg-red-100 text-red-600" : "bg-stone-200 text-stone-500"
-              )}>
-                <Store className="w-4 h-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">{customer.name}</div>
-                <div className="text-xs opacity-70 truncate">
-                  {customer.purchases.length} lần mua
+          {filteredCustomers.length === 0 ? (
+            <div className="text-center p-4 text-sm text-stone-500">
+              Chưa có khách hàng nào. Hãy thêm mới!
+            </div>
+          ) : (
+            filteredCustomers.map((customer) => (
+              <button
+                key={customer.id}
+                onClick={() => setSelectedCustomerId(customer.id)}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-left transition-colors",
+                  selectedCustomerId === customer.id
+                    ? "bg-red-50 text-red-900"
+                    : "hover:bg-stone-100 text-stone-700"
+                )}
+              >
+                <div className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+                  selectedCustomerId === customer.id ? "bg-red-100 text-red-600" : "bg-stone-200 text-stone-500"
+                )}>
+                  <Store className="w-4 h-4" />
                 </div>
-              </div>
-            </button>
-          ))}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{customer.name}</div>
+                  <div className="text-xs opacity-70 truncate">
+                    {customer.purchases.length} lần mua
+                  </div>
+                </div>
+              </button>
+            ))
+          )}
         </div>
 
         <div className="p-4 border-t border-stone-200">
