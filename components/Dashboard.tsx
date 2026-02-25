@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn } from 'lucide-react';
+import { Plus, Search, Store, Flame, Calendar, TrendingUp, AlertCircle, Loader2, LogOut, LogIn, Edit2, Trash2, Check, X as CloseIcon } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -44,6 +44,10 @@ export default function Dashboard() {
 
   const [newPurchaseDate, setNewPurchaseDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [newPurchaseQuantity, setNewPurchaseQuantity] = useState('');
+
+  const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
+  const [editPurchaseDate, setEditPurchaseDate] = useState('');
+  const [editPurchaseQuantity, setEditPurchaseQuantity] = useState('');
 
   // Auth listener
   useEffect(() => {
@@ -144,6 +148,36 @@ export default function Dashboard() {
     }
   };
 
+  const handleEditCustomer = async () => {
+    if (!selectedCustomer) return;
+    const newName = prompt('Nhập tên mới cho khách hàng:', selectedCustomer.name);
+    if (newName && newName.trim() && newName !== selectedCustomer.name) {
+      try {
+        const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+        await updateDoc(customerRef, {
+          name: newName.trim(),
+        });
+      } catch (error) {
+        console.error('Error updating customer:', error);
+        alert('Có lỗi xảy ra khi cập nhật tên khách hàng.');
+      }
+    }
+  };
+
+  const handleDeleteCustomer = async () => {
+    if (!selectedCustomer) return;
+    if (confirm(`Bạn có chắc chắn muốn xóa khách hàng "${selectedCustomer.name}" và toàn bộ lịch sử mua hàng không?`)) {
+      try {
+        const { deleteDoc } = await import('firebase/firestore');
+        await deleteDoc(doc(db, 'chili_customers', selectedCustomer.id));
+        setSelectedCustomerId(null);
+      } catch (error) {
+        console.error('Error deleting customer:', error);
+        alert('Có lỗi xảy ra khi xóa khách hàng.');
+      }
+    }
+  };
+
   const handleAddPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCustomer || !newPurchaseDate || !newPurchaseQuantity) return;
@@ -166,6 +200,56 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Error adding purchase:', error);
       alert('Có lỗi xảy ra khi thêm lần mua.');
+    }
+  };
+
+  const handleStartEditPurchase = (purchase: Purchase) => {
+    setEditingPurchaseId(purchase.id);
+    setEditPurchaseDate(purchase.date);
+    setEditPurchaseQuantity(purchase.quantity.toString());
+  };
+
+  const handleSaveEditPurchase = async () => {
+    if (!selectedCustomer || !editingPurchaseId) return;
+
+    const updatedPurchases = selectedCustomer.purchases.map(p => {
+      if (p.id === editingPurchaseId) {
+        return {
+          ...p,
+          date: editPurchaseDate,
+          quantity: parseInt(editPurchaseQuantity, 10)
+        };
+      }
+      return p;
+    }).sort((a, b) => a.date.localeCompare(b.date));
+
+    try {
+      const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        purchases: updatedPurchases,
+        prediction: null,
+      });
+      setEditingPurchaseId(null);
+    } catch (error) {
+      console.error('Error updating purchase:', error);
+      alert('Có lỗi xảy ra khi cập nhật lần mua.');
+    }
+  };
+
+  const handleDeletePurchase = async (purchaseId: string) => {
+    if (!selectedCustomer) return;
+    if (confirm('Bạn có chắc chắn muốn xóa lần mua này không?')) {
+      const updatedPurchases = selectedCustomer.purchases.filter(p => p.id !== purchaseId);
+      try {
+        const customerRef = doc(db, 'chili_customers', selectedCustomer.id);
+        await updateDoc(customerRef, {
+          purchases: updatedPurchases,
+          prediction: null,
+        });
+      } catch (error) {
+        console.error('Error deleting purchase:', error);
+        alert('Có lỗi xảy ra khi xóa lần mua.');
+      }
     }
   };
 
@@ -328,14 +412,32 @@ export default function Dashboard() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {selectedCustomer ? (
           <>
-            <div className="p-8 border-b border-stone-200 bg-white">
-              <h2 className="text-3xl font-bold tracking-tight text-stone-900 mb-2">
-                {selectedCustomer.name}
-              </h2>
-              <p className="text-stone-500 flex items-center gap-2">
-                <Store className="w-4 h-4" />
-                Quản lý lịch sử mua hàng và dự đoán tồn kho
-              </p>
+            <div className="p-8 border-b border-stone-200 bg-white flex justify-between items-start">
+              <div>
+                <h2 className="text-3xl font-bold tracking-tight text-stone-900 mb-2">
+                  {selectedCustomer.name}
+                </h2>
+                <p className="text-stone-500 flex items-center gap-2">
+                  <Store className="w-4 h-4" />
+                  Quản lý lịch sử mua hàng và dự đoán tồn kho
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleEditCustomer}
+                  className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+                  title="Sửa tên khách hàng"
+                >
+                  <Edit2 className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={handleDeleteCustomer}
+                  className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Xóa khách hàng"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8">
@@ -399,13 +501,65 @@ export default function Dashboard() {
                         </div>
                       ) : (
                         selectedCustomer.purchases.map((purchase) => (
-                          <div key={purchase.id} className="p-4 px-6 flex justify-between items-center hover:bg-stone-50 transition-colors">
-                            <div className="font-medium text-stone-900">
-                              {format(parseISO(purchase.date), 'dd/MM/yyyy')}
-                            </div>
-                            <div className="text-stone-600 font-mono bg-stone-100 px-3 py-1 rounded-md">
-                              {purchase.quantity} lít
-                            </div>
+                          <div key={purchase.id} className="p-4 px-6 flex justify-between items-center hover:bg-stone-50 transition-colors group">
+                            {editingPurchaseId === purchase.id ? (
+                              <div className="flex flex-1 gap-4 items-center">
+                                <input
+                                  type="date"
+                                  value={editPurchaseDate}
+                                  onChange={(e) => setEditPurchaseDate(e.target.value)}
+                                  className="px-2 py-1 text-sm border border-stone-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                                />
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    value={editPurchaseQuantity}
+                                    onChange={(e) => setEditPurchaseQuantity(e.target.value)}
+                                    className="w-20 px-2 py-1 text-sm border border-stone-200 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 font-mono"
+                                  />
+                                  <span className="text-xs text-stone-500">lít</span>
+                                </div>
+                                <div className="ml-auto flex gap-1">
+                                  <button
+                                    onClick={handleSaveEditPurchase}
+                                    className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingPurchaseId(null)}
+                                    className="p-1.5 text-stone-400 hover:bg-stone-100 rounded-md transition-colors"
+                                  >
+                                    <CloseIcon className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="font-medium text-stone-900">
+                                  {format(parseISO(purchase.date), 'dd/MM/yyyy')}
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <div className="text-stone-600 font-mono bg-stone-100 px-3 py-1 rounded-md">
+                                    {purchase.quantity} lít
+                                  </div>
+                                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={() => handleStartEditPurchase(purchase)}
+                                      className="p-1.5 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-md transition-colors"
+                                    >
+                                      <Edit2 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeletePurchase(purchase.id)}
+                                      className="p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </>
+                            )}
                           </div>
                         ))
                       )}
